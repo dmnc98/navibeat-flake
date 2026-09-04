@@ -1,0 +1,119 @@
+name: Auto-bump NaviBeat
+
+on:
+  schedule:
+    # Every 6 hours, offset from :00 to avoid GitHub cron contention. Upstream
+    # ships a release every day or two, so polling this often keeps the flake
+    # within a few hours of the newest build.
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: auto-bump-navibeat
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check upstream for a newer release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # /releases/latest skips drafts and prereleases, so a tagged beta
+          # never gets picked up here.
+          latest=$(gh api repos/nenadjokic/navibeat-linux/releases/latest \
+            --jq '.tag_name' | sed 's/^v//')
+          current=$(sed -nE 's/^  version = "([^"]+)";$/\1/p' navibeat.nix)
+
+          if [ -z "$latest" ] || [ -z "$current" ]; then
+            echo "::error::Could not read latest (='$latest') or current (='$current') version."
+            exit 1
+          fi
+
+          echo "current=$current  latest=$latest"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+          if [ "$latest" = "$current" ]; then
+            echo "Already on the newest release; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rewrite version and hash
+        if: steps.check.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          url="https://github.com/nenadjokic/navibeat-linux/releases/download/v${VERSION}/NaviBeat-linux-x86_64.AppImage"
+          hash=$(nix store prefetch-file --json "$url" | jq -r '.hash')
+
+          if [ -z "$hash" ] || [ "$hash" = "null" ]; then
+            echo "::error::Could not prefetch $url"
+            exit 1
+          fi
+          echo "New hash: $hash"
+
+          # Both lines are anchored to their exact shape in navibeat.nix; a
+          # refactor that reflows them will make these no-ops, so the counts
+          # are checked rather than trusted.
+          sed -i -E "s|^  version = \"[^\"]+\";$|  version = \"${VERSION}\";|" navibeat.nix
+          sed -i -E "s|^  hash = \"sha256-[^\"]+\";$|  hash = \"${hash}\";|" navibeat.nix
+
+          grep -qF "  version = \"${VERSION}\";" navibeat.nix \
+            || { echo "::error::version substitution did not apply"; exit 1; }
+          grep -qF "  hash = \"${hash}\";" navibeat.nix \
+            || { echo "::error::hash substitution did not apply"; exit 1; }
+
+      - name: Verify the build
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          # This is what catches an upstream layout change: a dropped
+          # NaviBeat.desktop/NaviBeat.png, or the `rm` of the bundled
+          # libdbus-1.so.3 in navibeat.nix failing because upstream stopped
+          # shipping it. Either way the job fails loudly instead of pushing a
+          # broken flake.
+          nix build .#navibeat --print-build-logs
+          test -x result/bin/navibeat
+          test -f result/share/applications/navibeat.desktop
+          test -f result/share/pixmaps/navibeat.png
+
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add navibeat.nix
+          git commit -m "Bump NaviBeat to ${VERSION}"
+          git push origin HEAD:main
+
+      - name: Trigger the release workflow
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A push made with GITHUB_TOKEN does not fire `on: push`, so the tag
+          # workflow has to be dispatched by hand. workflow_dispatch is one of
+          # the two events GitHub exempts from that anti-recursion rule.
+          gh workflow run tag-on-version-bump.yml --ref main

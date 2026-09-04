@@ -1,0 +1,49 @@
+name: Tag on version bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - navibeat.nix
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-on-version-bump
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Release if the version is new
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          version=$(sed -nE 's/^  version = "([^"]+)";$/\1/p' navibeat.nix)
+          if [ -z "$version" ]; then
+            echo "::error::Could not extract version from navibeat.nix"
+            exit 1
+          fi
+
+          tag="v${version}"
+          echo "Detected version: ${version} (tag: ${tag})"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; nothing to do."
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "NaviBeat ${version}" \
+            --notes "Packages [NaviBeat ${version}](https://github.com/nenadjokic/navibeat-linux/releases/tag/${tag}) for Nix."
