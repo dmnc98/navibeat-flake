@@ -21,6 +21,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The branch tip, not `github.sha`. GitHub sometimes delivers one
+          # cron tick as two runs seconds apart; `concurrency` serialises them,
+          # but `github.sha` is pinned when a run is *created*, so the second
+          # one would check out a tree from before the first one's push, see a
+          # stale `version`, redo the identical bump and then fail to push it.
+          # Starting from the tip means the duplicate stops at the version
+          # check below instead, with nothing to do.
+          ref: main
+          # Full history, so the rebase backstop in the push step has a merge
+          # base to work from; a shallow fetch can leave it staring at two
+          # histories it cannot connect. The repo is a few dozen commits.
+          fetch-depth: 0
 
       - uses: cachix/install-nix-action@v30
         with:
@@ -106,6 +119,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add navibeat.nix
           git commit -m "Bump NaviBeat to ${VERSION}"
+
+          # `ref: main` above means a duplicate run bails at the version check,
+          # so there should be nothing to rebase onto. Kept as a backstop for a
+          # hand-push landing in the same window: rebasing an identical bump
+          # drops it as already-applied and the push becomes a no-op, while a
+          # genuine divergence still stops the job loudly.
+          git pull --rebase origin main
           git push origin HEAD:main
 
       - name: Trigger the release workflow
