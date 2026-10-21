@@ -53,28 +53,33 @@ Pass `--tui` to get the terminal client instead of the window.
 
 ## What this flake handles
 
-Two things the plain AppImage gets wrong under Nix, both documented at the
-relevant code in [`navibeat.nix`](navibeat.nix):
+One thing the plain AppImage gets wrong under Nix, documented at the relevant
+code in [`navibeat.nix`](navibeat.nix):
 
-- **The bundled `libdbus-1.so.3` is removed.** AppRun prepends the bundle's own
-  `vlc/` to `LD_LIBRARY_PATH`, which puts a second copy of libdbus in the
-  process alongside the FHS environment's. Skia's theme detection then dlopens
-  libdbus and locks a process-global mutex living in the *other* copy, and the
-  JVM dies with a SIGSEGV in `pthread_mutex_lock`. That path only runs with
-  Appearance set to "System" — and since the setting is persisted, the app
-  crashes the moment you pick it and never starts again.
 - **The `.desktop` entry and icon are rewritten.** Upstream ships
   `Exec=NaviBeat`/`Icon=NaviBeat`, but the wrapper installs the binary as
   `navibeat`. The icon is a single 1024x1024 PNG, which is not a size hicolor
   indexes, so it goes in `share/pixmaps` rather than a hicolor bucket nothing
   would look in.
 
+Up to 1.0.0 this flake also deleted the bundled `libdbus-1.so.3`. AppRun
+prepends the bundle's own `vlc/` to `LD_LIBRARY_PATH`, which put a second copy
+of libdbus in the process alongside the FHS environment's; Skia's theme
+detection dlopens libdbus and locks a process-global mutex living in the
+*other* copy, and the JVM died with a SIGSEGV in `pthread_mutex_lock`. That
+path only runs with Appearance set to "System", and since the setting is
+persisted, the app crashed the moment you picked it and would not start again.
+1.0.1 stopped shipping the library — upstream's own fix — so there is nothing
+left to remove and the workaround is gone from here too. The comment in
+[`navibeat.nix`](navibeat.nix) keeps the full story, and what to check if a
+future release bundles it again.
+
 This packages the full AppImage, not `-slim`: the full build carries its own JRE
 *and* its own VLC, which AppRun points at via `LD_LIBRARY_PATH` and
 `VLC_PLUGIN_PATH`, so there is no system libvlc to line up against. The only
-libraries the bundle leaves out are libXi/libXrender/libXtst, wanted by the
-JDK's `libawt_xawt`, and those are already in `appimageTools`' default FHS
-environment.
+libraries the bundle leaves out are libXi/libXtst, wanted by the JDK's
+`libawt_xawt`, and — since 1.0.1 — libdbus-1/libsystemd. All of them are
+already in `appimageTools`' default FHS environment.
 
 Only `x86_64-linux` is packaged. Upstream also publishes aarch64 AppImages, but
 those are neither packaged nor build-verified in CI here.
