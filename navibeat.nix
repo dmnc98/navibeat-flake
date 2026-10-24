@@ -10,8 +10,8 @@ let
   # `version` and `hash` are rewritten in place by
   # .github/workflows/bump-navibeat.yml. Keep both on their own line, in this
   # exact `name = "value";` shape — the workflow's sed patterns anchor on it.
-  version = "1.0.44";
-  hash = "sha256-NNyFzXUrkpfVRKg/j01s1R1avVwH1aK7Tlvl6csOAGg=";
+  version = "1.0.45";
+  hash = "sha256-1swVK8nroUSzdZ/dWEmXEDKf8YMP25iJvdA9rT/S1Fw=";
 
   # The full build, not `-slim`: it carries its own JRE *and* its own VLC, which
   # AppRun points at via LD_LIBRARY_PATH/VLC_PLUGIN_PATH, so there is no system
